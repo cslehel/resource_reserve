@@ -20,11 +20,19 @@ if ( $body === '' ) {
 	send_error( 422, 'The message cannot be empty.' );
 }
 
+if ( mb_strlen( $body ) > 2000 ) {
+	send_error( 422, 'The message is too long.' );
+}
+
 try {
 
 	$database_connection = open_database_connection();
 
 	$current_user = authenticate_user( $database_connection );
+
+	// Limit how fast one account can post, so messaging cannot be used to flood
+	// other users with notifications.
+	enforce_rate_limit( $database_connection, 'send_message', ( string ) $current_user[ 'user_id' ], 20, 300 );
 
 	$resource_row = load_active_resource( $database_connection, $resource_id );
 

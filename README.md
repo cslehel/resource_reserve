@@ -50,6 +50,7 @@ Open `api/config.php` and adjust:
 | Method | Path                      | Auth   | Purpose                                   |
 | ------ | ------------------------- | ------ | ----------------------------------------- |
 | GET    | `/ping.php`               | no     | Health check used by the app's **Test connection** button: confirms PHP runs this API and whether its database is reachable |
+| GET/POST | `/delete_account.php`   | no     | Web page where a user deletes their account and data ( see section 7 ) |
 | POST   | `/register.php`           | no     | Create an account, send verification mail |
 | GET    | `/verify_email.php?token=`| no     | Open from email to verify the account     |
 | POST   | `/login.php`              | no     | Sign in, returns an access token          |
@@ -98,10 +99,44 @@ for an hourly resource, or 3 days for a daily one ).
 ### A note on email
 
 `register.php` calls PHP's `mail()` function. On a development machine without a
-mail transport no message is delivered, so the response also returns the
-`verification_link`. The app shows that link after registering so the flow can
-be completed during testing. Remove that field from the response before going to
-production.
+mail transport no message is delivered, so during development the response also
+returns the `verification_link` and the app shows it after registering. This is
+controlled by the `DEVELOPMENT_MODE` constant in `config.php`: set it to `false`
+in production so the link is delivered only by email and is never exposed in the
+API response.
+
+### Abuse prevention ( rate limiting )
+
+Sensitive endpoints are throttled with a sliding window backed by the
+`rate_limit` table, so the API resists brute-force sign in, automated mass
+registration, email flooding and notification spam. Current limits per window:
+
+| Action                    | Limit                          |
+| ------------------------- | ------------------------------ |
+| Sign in                   | 10 per 15 min, per IP and per email |
+| Registration              | 5 per hour per IP, 3 per hour per email |
+| Send message              | 20 per 5 min, per user         |
+| Create reservation        | 30 per 10 min, per user        |
+| Health check ( ping )     | 30 per minute, per IP          |
+| Account deletion request  | 5 per 15 min, per IP and per email |
+
+Tune the numbers in the matching `enforce_rate_limit( ... )` calls. The client
+address comes from `REMOTE_ADDR` only; `X-Forwarded-For` is **not** trusted
+because it is attacker-controlled. If the API runs behind a reverse proxy,
+resolve the real client address in the proxy. The limiter fails open: if the
+`rate_limit` table is unavailable the request is allowed rather than the whole
+API going down.
+
+Other hardening: PHP error display is turned off ( errors go to the server log,
+not to clients ), responses send `X-Content-Type-Options: nosniff`, sign in and
+account deletion run a constant-time password check so a missing account cannot
+be told apart by timing, and request fields ( email, password, message and
+description lengths ) are bounded.
+
+> **Upgrading an existing database:** the rate limiting feature adds one table.
+> Re-running `schema.sql` drops and recreates everything ( losing data ), so on a
+> live database create just the new table instead — copy the `CREATE TABLE
+> rate_limit ( ... )` statement from `database/schema.sql` and run it on its own.
 
 ## 3. Point the Android app at the API
 
@@ -208,3 +243,35 @@ message opens **Messages**, a reservation opens the administrator review screen.
   interval. For instant push you would add Firebase Cloud Messaging, which is
   out of scope here; the polling design keeps the project self-hosted with no
   third-party account.
+
+## 7. Account and data deletion
+
+`delete_account.php` is a self-contained web page ( no app required ) that lets a
+user delete their account and associated data. Google Play requires such a URL
+for any app that lets people create an account.
+
+- Opening it ( `GET` ) shows a form asking for the account email, password, and a
+  confirmation checkbox.
+- Submitting it ( `POST` ) verifies the email and password, then deletes the
+  account. The foreign keys cascade the deletion to the user's reservations,
+  messages, notifications and administrator assignments, and the user's own
+  `log` rows are removed as well. A single anonymous `account_deleted` log row is
+  written so an operator can see the action happened, with nothing that
+  identifies the person.
+
+Requiring the password means only the account owner can trigger the deletion,
+which also protects the form against cross-site request forgery. The page is
+rate limited ( see "Abuse prevention" above ), reports failures with one generic
+message, and sends anti-clickjacking and content-type headers. Serve it over
+HTTPS like the rest of the API.
+
+The public URL — for example
+`https://your-host/resource_reserve/api/delete_account.php` — is what you enter
+in Play Console under **App content → Data deletion**, and it is linked from the
+app's privacy policy ( `privacy.html` / `privacy-ro.html` ).
+
+Note one residual: a notification sent to *other* users may mention this user's
+email in its text ( for example "alice@example.com reserved Meeting Room A" ).
+Those rows belong to the recipients and are not removed by this deletion. If you
+need to scrub them too, delete from `notification` where the `body` contains the
+address before deleting the account.

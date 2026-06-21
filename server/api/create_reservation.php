@@ -19,11 +19,19 @@ $begin_datetime_text = trim( ( string ) ( $request_body[ 'begin_datetime' ] ?? '
 $end_datetime_text = trim( ( string ) ( $request_body[ 'end_datetime' ] ?? '' ) );
 $description = trim( ( string ) ( $request_body[ 'description' ] ?? '' ) );
 
+if ( mb_strlen( $description ) > 500 ) {
+	send_error( 422, 'The description is too long.' );
+}
+
 try {
 
 	$database_connection = open_database_connection();
 
 	$current_user = authenticate_user( $database_connection );
+
+	// Limit how many reservations one account can fire off in a short time, on
+	// top of the cap on simultaneously active reservations checked below.
+	enforce_rate_limit( $database_connection, 'create_reservation', ( string ) $current_user[ 'user_id' ], 30, 600 );
 
 	$resource_row = load_active_resource( $database_connection, $resource_id );
 

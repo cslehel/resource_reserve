@@ -9,6 +9,7 @@ CREATE DATABASE IF NOT EXISTS resource_reserve
 USE resource_reserve;
 
 -- Drop in dependency order so the script can be re-run cleanly.
+DROP TABLE IF EXISTS rate_limit;
 DROP TABLE IF EXISTS notification;
 DROP TABLE IF EXISTS message;
 DROP TABLE IF EXISTS log;
@@ -181,6 +182,24 @@ CREATE TABLE notification (
 	KEY index_notification_is_delivered ( is_delivered ),
 	KEY index_notification_is_read ( is_read ),
 	CONSTRAINT foreign_key_notification_user FOREIGN KEY ( user_id ) REFERENCES user ( user_id ) ON DELETE CASCADE
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
+
+
+-- ---------------------------------------------------------------------------
+-- rate_limit
+-- One row per throttled attempt ( a sign in, a registration, a message, an
+-- account deletion request and so on ). Each row records the action together
+-- with the caller's identifier ( IP address, email or user id ). The API counts
+-- the rows inside a sliding time window to decide whether to allow the next
+-- attempt, and deletes rows that have aged out of the window. It has no foreign
+-- keys on purpose: it must keep working for callers that are not signed in.
+-- ---------------------------------------------------------------------------
+CREATE TABLE rate_limit (
+	rate_limit_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+	rate_limit_key VARCHAR( 190 ) NOT NULL,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY ( rate_limit_id ),
+	KEY index_rate_limit_key_created ( rate_limit_key, created_at )
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 

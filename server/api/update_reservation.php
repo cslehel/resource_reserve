@@ -19,6 +19,10 @@ $begin_datetime_text = trim( ( string ) ( $request_body[ 'begin_datetime' ] ?? '
 $end_datetime_text = trim( ( string ) ( $request_body[ 'end_datetime' ] ?? '' ) );
 $description = trim( ( string ) ( $request_body[ 'description' ] ?? '' ) );
 
+if ( mb_strlen( $description ) > 500 ) {
+	send_error( 422, 'The description is too long.' );
+}
+
 try {
 
 	$database_connection = open_database_connection();

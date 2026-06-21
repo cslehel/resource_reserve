@@ -15,7 +15,7 @@ $request_body = read_json_request_body();
 $email = trim( ( string ) ( $request_body[ 'email' ] ?? '' ) );
 $password = ( string ) ( $request_body[ 'password' ] ?? '' );
 
-if ( !filter_var( $email, FILTER_VALIDATE_EMAIL ) ) {
+if ( !filter_var( $email, FILTER_VALIDATE_EMAIL ) || strlen( $email ) > 254 ) {
 	send_error( 422, 'Please provide a valid email address.' );
 }
 
@@ -23,9 +23,18 @@ if ( strlen( $password ) < 8 ) {
 	send_error( 422, 'The password must be at least 8 characters long.' );
 }
 
+if ( strlen( $password ) > 200 ) {
+	send_error( 422, 'The password is too long.' );
+}
+
 try {
 
 	$database_connection = open_database_connection();
+
+	// Cap how many accounts a single network address can create, to stop
+	// automated mass registration and the verification emails it would send.
+	enforce_rate_limit( $database_connection, 'register_ip', get_client_ip_address(), 5, 3600 );
+	enforce_rate_limit( $database_connection, 'register_email', strtolower( $email ), 3, 3600 );
 
 	$existing_statement = $database_connection->prepare( 'SELECT user_id FROM user WHERE email = :email LIMIT 1' );
 	$existing_statement->execute( [ ':email' => $email ] );
@@ -55,14 +64,20 @@ try {
 	$email_headers = 'From: ' . VERIFICATION_EMAIL_SENDER;
 
 	// The return value is ignored on purpose: on many development machines no
-	// mail transport is configured. The verification link is also returned in
-	// the response so the flow can be completed during testing.
+	// mail transport is configured.
 	@mail( $email, $email_subject, $email_message, $email_headers );
 
-	send_success( [
-		'message' => 'Account created. Please check your email to verify your account.',
-		'verification_link' => $verification_link
-	] );
+	$response_payload = [
+		'message' => 'Account created. Please check your email to verify your account.'
+	];
+
+	// Only expose the link directly during development. In production it must be
+	// delivered by email alone, never returned in the response.
+	if ( DEVELOPMENT_MODE ) {
+		$response_payload[ 'verification_link' ] = $verification_link;
+	}
+
+	send_success( $response_payload );
 
 } catch ( Throwable $error ) {
 

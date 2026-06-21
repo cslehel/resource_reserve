@@ -5,6 +5,12 @@
 
 declare( strict_types = 1 );
 
+// Never echo PHP warnings or stack traces to the client: they can leak file
+// paths, query fragments and other internals. Errors are still written to the
+// server log. Keep this on in production.
+ini_set( 'display_errors', '0' );
+error_reporting( E_ALL );
+
 // ---------------------------------------------------------------------------
 // Database connection settings. Adjust these to match the hosting environment.
 // ---------------------------------------------------------------------------
@@ -19,6 +25,12 @@ const API_PUBLIC_BASE_URL = 'https://example.com/resource_reserve/api';
 
 // Address shown as the sender of verification emails.
 const VERIFICATION_EMAIL_SENDER = 'resource-reserve@example.com';
+
+// In development the registration response also returns the verification link,
+// because a development machine usually has no mail transport. Set this to
+// false in production so the link is delivered only by email and is never
+// exposed in the API response.
+const DEVELOPMENT_MODE = true;
 
 
 // ---------------------------------------------------------------------------
@@ -69,6 +81,7 @@ function send_json_response( int $status_code, array $payload ) : void {
 
 	http_response_code( $status_code );
 	header( 'Content-Type: application/json; charset=utf-8' );
+	header( 'X-Content-Type-Options: nosniff' );
 
 	echo json_encode( $payload );
 
@@ -106,6 +119,69 @@ function require_request_method( string $expected_method ) : void {
 
 	if ( strtoupper( $actual_method ) !== strtoupper( $expected_method ) ) {
 		send_error( 405, 'This endpoint only accepts ' . $expected_method . ' requests.' );
+	}
+}
+
+
+// ---------------------------------------------------------------------------
+// get_client_ip_address
+// Returns the caller's network address. Only REMOTE_ADDR is trusted: headers
+// such as X-Forwarded-For are attacker controlled and would let a client forge
+// a new identity on every request to slip past the rate limiter. If the API
+// runs behind a reverse proxy, resolve the real address in the proxy instead.
+// ---------------------------------------------------------------------------
+function get_client_ip_address() : string {
+
+	$remote_address = $_SERVER[ 'REMOTE_ADDR' ] ?? '';
+
+	return is_string( $remote_address ) && $remote_address !== '' ? $remote_address : 'unknown';
+}
+
+
+// ---------------------------------------------------------------------------
+// enforce_rate_limit
+// Sliding window throttle backed by the rate_limit table. Counts how many times
+// the same action has been performed by the same identifier ( an IP address, an
+// email, or a user id ) inside the window, and stops with a 429 error once the
+// limit is reached. Every allowed call records one attempt.
+//
+// It fails open: if the rate_limit table is missing or the query errors, the
+// request is allowed through rather than taking the whole API down.
+// ---------------------------------------------------------------------------
+function enforce_rate_limit( PDO $database_connection, string $action, string $identifier, int $maximum_attempts, int $window_seconds ) : void {
+
+	$rate_limit_key = mb_substr( $action . ':' . $identifier, 0, 190 );
+
+	// The window is a trusted integer from the calling code, never user input, so
+	// it is safe to inline. A bound parameter inside INTERVAL is rejected by some
+	// MySQL versions ( the same reason the reservation query inlines its range ).
+	$window_seconds = max( 1, $window_seconds );
+
+	try {
+
+		$cleanup_statement = $database_connection->prepare( 'DELETE FROM rate_limit WHERE rate_limit_key = :rate_limit_key AND created_at < DATE_SUB( NOW(), INTERVAL ' . $window_seconds . ' SECOND )' );
+		$cleanup_statement->execute( [ ':rate_limit_key' => $rate_limit_key ] );
+
+		$count_statement = $database_connection->prepare( 'SELECT COUNT( * ) AS attempt_count FROM rate_limit WHERE rate_limit_key = :rate_limit_key' );
+		$count_statement->execute( [ ':rate_limit_key' => $rate_limit_key ] );
+
+		$attempt_count = ( int ) $count_statement->fetch()[ 'attempt_count' ];
+
+	} catch ( Throwable $rate_limit_error ) {
+
+		return;
+	}
+
+	if ( $attempt_count >= $maximum_attempts ) {
+		send_error( 429, 'Too many requests. Please wait a moment and try again.' );
+	}
+
+	try {
+
+		$insert_statement = $database_connection->prepare( 'INSERT INTO rate_limit ( rate_limit_key ) VALUES ( :rate_limit_key )' );
+		$insert_statement->execute( [ ':rate_limit_key' => $rate_limit_key ] );
+
+	} catch ( Throwable $rate_limit_error ) {
 	}
 }
 

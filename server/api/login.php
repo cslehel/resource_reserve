@@ -22,12 +22,26 @@ try {
 
 	$database_connection = open_database_connection();
 
+	// Throttle sign in attempts by network address and by email so an attacker
+	// cannot brute force passwords or probe which emails are registered.
+	enforce_rate_limit( $database_connection, 'login_ip', get_client_ip_address(), 10, 900 );
+	enforce_rate_limit( $database_connection, 'login_email', strtolower( $email ), 10, 900 );
+
 	$user_statement = $database_connection->prepare( 'SELECT user_id, email, password_hash, is_email_verified FROM user WHERE email = :email LIMIT 1' );
 	$user_statement->execute( [ ':email' => $email ] );
 
 	$user_row = $user_statement->fetch();
 
-	if ( $user_row === false || !password_verify( $password, $user_row[ 'password_hash' ] ) ) {
+	// Always run a hash comparison, even when no account matched, so the response
+	// takes the same time whether or not the email exists. This denies the timing
+	// signal an attacker would otherwise use to enumerate registered accounts.
+	$password_hash_to_check = $user_row === false
+		? '$2y$10$usesomesillystringforsalt0123456789abcdefghijklmnopqrstuv'
+		: $user_row[ 'password_hash' ];
+
+	$is_password_correct = password_verify( $password, $password_hash_to_check );
+
+	if ( $user_row === false || !$is_password_correct ) {
 		send_error( 401, 'The email or password is incorrect.' );
 	}
 

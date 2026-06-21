@@ -15,11 +15,18 @@ $is_database_reachable = false;
 
 try {
 
-	open_database_connection();
+	$database_connection = open_database_connection();
 
 	$is_database_reachable = true;
 
 } catch ( Throwable $ignored_error ) {
+}
+
+// Throttle by network address so this unauthenticated endpoint cannot be used to
+// open database connections in a tight loop. Only runs when the database is up,
+// since the limiter itself needs it; when it is down there is nothing to exhaust.
+if ( $is_database_reachable ) {
+	enforce_rate_limit( $database_connection, 'ping', get_client_ip_address(), 30, 60 );
 }
 
 send_success( [
