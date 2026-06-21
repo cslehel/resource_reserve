@@ -271,7 +271,7 @@ in Play Console under **App content → Data deletion**, and it is linked from t
 app's privacy policy ( `privacy.html` / `privacy-ro.html` ).
 
 Note one residual: a notification sent to *other* users may mention this user's
-email in its text ( for example "alice@example.com reserved Meeting Room A" ).
+email in its text ( for example "user@example.com reserved Meeting Room A" ).
 Those rows belong to the recipients and are not removed by this deletion. If you
 need to scrub them too, delete from `notification` where the `body` contains the
 address before deleting the account.
