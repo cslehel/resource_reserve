@@ -4,8 +4,6 @@ This folder holds the MySQL schema and the PHP API that the Android app talks to
 
 ## 1. Create the database
 
-resource_reserve, YMRocothpet034^*
-
 Run the schema with the MySQL client ( it creates the `resource_reserve`
 database, all four tables, and some seed data ):
 
