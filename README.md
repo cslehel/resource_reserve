@@ -5,7 +5,7 @@ This folder holds the MySQL schema and the PHP API that the Android app talks to
 ## 1. Create the database
 
 Run the schema with the MySQL client ( it creates the `resource_reserve`
-database, all four tables, and some seed data ):
+database, all nine tables, and some seed data ):
 
 ```bash
 mysql -u root -p < database/schema.sql
@@ -31,6 +31,7 @@ FLUSH PRIVILEGES;
 | `message`     | Per-resource conversation messages between users and the resource's administrators. |
 | `notification`| Queue of notifications ( new reservation / new message ) the app polls and shows. |
 | `log`         | Append only record of events ( registration, login, reservations, reviews ). |
+| `rate_limit`  | Sliding-window counters that throttle sensitive endpoints ( see Abuse prevention ). |
 
 ## 2. Deploy the API
 
@@ -82,7 +83,9 @@ administrator approval / rejection ) is written to the `log` table.
 A message belongs to a resource; everyone who administers that resource and
 everyone who has already posted on it ( other than the sender ) can see it and
 receives a notification. `messages.php` returns each message with an `is_sent`
-flag so the app can mark it as sent or received.
+flag so the app can mark it as sent or received; it also accepts an optional
+`resource_id` query parameter that narrows the result to one resource ( the
+Messages screen uses it to show the conversation for the chosen resource ).
 
 Authenticated requests send the token in the header:
 `Authorization: Bearer <access_token>`.
@@ -95,6 +98,58 @@ Reservations are stored to the minute: `create_reservation.php` and
 `year-month-day hour:minute` format. The booked length must fit inside the
 resource's maximum period, which is read in its own unit ( for example 8 hours
 for an hourly resource, or 3 days for a daily one ).
+
+Both endpoints also reject an overlapping timeframe: a resource can hold only
+one active ( `pending` or `confirmed` ) reservation at any given moment. The
+check ( `assert_no_overlapping_reservation` in `reservation_helpers.php` )
+ignores `rejected` reservations and ones that have already ended, and, when
+editing, ignores the reservation being changed. Two reservations that merely
+touch ( one ends exactly when the next begins ) are allowed. A clash returns
+HTTP `409`; the app shows the message and also warns about a visible clash
+before sending the request.
+
+#### Reservation window rules
+
+`validate_reservation_timeframe` in `reservation_helpers.php` enforces, in
+addition to the maximum period:
+
+- **Lead time** – a reservation must begin at least so many minutes from now,
+  from the `reservation_minimum_lead_minutes` setting ( seeded at `60` ).
+- **Horizon** – a reservation may not begin more than so many months from now,
+  from the `reservation_maximum_horizon_months` setting ( seeded at `3` ).
+
+Both rules live in the `setting` table ( read through
+`read_reservation_lead_minutes` / `read_reservation_horizon_months` ), so they
+can be changed without touching the code. `resources.php` returns the current
+values ( as `minimum_lead_minutes` and `maximum_horizon_months` ) alongside the
+resource list, so the Android app reads the rules from the server instead of
+hardcoding them: it constrains the date picker and shows the same messages,
+while the server stays the final authority.
+
+The per-user limit ( `maximum_active_reservations_per_user` ) and the overlap
+check both count only active reservations: `count_active_reservations` and the
+overlap query select `status IN ( 'pending', 'confirmed' )` with
+`end_datetime >= NOW()`, so expired and rejected reservations never count
+against a user or block a timeframe.
+
+#### Resource availability ( active hours and working days )
+
+Each resource has an `availability_mode`:
+
+- **`always`** – bookable 24 hours a day, 7 days a week. The schedule columns are
+  ignored.
+- **`scheduled`** – bookable only on the `working_days` ( a `SET` of weekday
+  names ) and, on each day it touches, only between `active_start_time` and
+  `active_end_time`. An `active_end_time` of `00:00:00` means the end of the day,
+  so `00:00:00`–`00:00:00` is "all day".
+
+`validate_resource_schedule` walks the reservation one calendar day at a time, so
+the rule works for both single day bookings ( for example the hourly microscope,
+weekdays `08:00`–`18:00` ) and multi day bookings ( for example a car that is
+free all day but only on weekdays ). A booking that would run through hours
+outside the active window ( such as overnight on an `08:00`–`18:00` resource ) is
+rejected. `resources.php` returns these fields so the Android app shows the same
+messages before sending the request.
 
 ### A note on email
 
@@ -133,11 +188,6 @@ account deletion run a constant-time password check so a missing account cannot
 be told apart by timing, and request fields ( email, password, message and
 description lengths ) are bounded.
 
-> **Upgrading an existing database:** the rate limiting feature adds one table.
-> Re-running `schema.sql` drops and recreates everything ( losing data ), so on a
-> live database create just the new table instead — copy the `CREATE TABLE
-> rate_limit ( ... )` statement from `database/schema.sql` and run it on its own.
-
 ## 3. Point the Android app at the API
 
 The server address is no longer compiled into the app. It is entered on the
@@ -146,10 +196,11 @@ The server address is no longer compiled into the app. It is entered on the
 folder, with no trailing slash ). The address is saved per device and reused on
 the next sign in, so it only has to be typed once.
 
-- **HTTPS only.** The app rejects any address that is not `https://`, and the
-  Android manifest no longer allows cleartext traffic. Serve the API over TLS,
-  including for local testing ( a self-signed certificate trusted by the device,
-  or a tunnel such as `https://…` from your reverse proxy ).
+- **HTTPS only.** The login screen rejects any address that is not `https://`
+  ( the entered URL is validated before it is saved ), and cleartext HTTP is
+  disabled by default on the Android versions the app supports. Serve the API
+  over TLS, including for local testing ( a self-signed certificate trusted by
+  the device, or a tunnel such as `https://…` from your reverse proxy ).
 - **Test connection.** The login screen has a **Test connection** button. It
   calls `GET /ping.php` and only reports success when that endpoint returns this
   service's identifier, so it verifies the PHP API is actually deployed there —
@@ -268,7 +319,7 @@ HTTPS like the rest of the API.
 The public URL — for example
 `https://your-host/resource_reserve/api/delete_account.php` — is what you enter
 in Play Console under **App content → Data deletion**, and it is linked from the
-app's privacy policy ( `privacy.html` / `privacy-ro.html` ).
+app's privacy policy.
 
 Note one residual: a notification sent to *other* users may mention this user's
 email in its text ( for example "user@example.com reserved Meeting Room A" ).

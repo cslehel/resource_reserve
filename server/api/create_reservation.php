@@ -35,7 +35,9 @@ try {
 
 	$resource_row = load_active_resource( $database_connection, $resource_id );
 
-	validate_reservation_timeframe( $resource_row, $begin_datetime_text, $end_datetime_text );
+	validate_reservation_timeframe( $database_connection, $resource_row, $begin_datetime_text, $end_datetime_text );
+
+	assert_no_overlapping_reservation( $database_connection, $resource_id, $begin_datetime_text, $end_datetime_text );
 
 	$maximum_active_reservations = ( int ) read_setting_value( $database_connection, 'maximum_active_reservations_per_user', '5' );
 

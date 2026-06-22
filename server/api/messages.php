@@ -3,6 +3,7 @@
 // Returns the messages the signed in user is allowed to see: every message on a
 // resource they administer, and every message on a resource where they have
 // already posted. Each message is marked as sent ( by this user ) or received.
+// An optional resource_id query parameter narrows the result to one resource.
 
 declare( strict_types = 1 );
 
@@ -16,13 +17,24 @@ try {
 
 	$current_user = authenticate_user( $database_connection );
 
-	$query_text = 'SELECT message.message_id, message.resource_id, resource.resource_name, message.sender_user_id, message.body, message.created_at, sender.email AS sender_email FROM message INNER JOIN resource ON resource.resource_id = message.resource_id INNER JOIN user AS sender ON sender.user_id = message.sender_user_id WHERE message.resource_id IN ( SELECT resource_id FROM administrator_resource WHERE user_id = :administrator_user_id UNION SELECT DISTINCT resource_id FROM message WHERE sender_user_id = :participant_user_id ) ORDER BY message.created_at ASC';
+	$resource_id = isset( $_GET[ 'resource_id' ] ) ? ( int ) $_GET[ 'resource_id' ] : 0;
 
-	$message_statement = $database_connection->prepare( $query_text );
-	$message_statement->execute( [
+	$query_parameters = [
 		':administrator_user_id' => $current_user[ 'user_id' ],
 		':participant_user_id' => $current_user[ 'user_id' ]
-	] );
+	];
+
+	$resource_filter_clause = '';
+
+	if ( $resource_id > 0 ) {
+		$resource_filter_clause = ' AND message.resource_id = :resource_id';
+		$query_parameters[ ':resource_id' ] = $resource_id;
+	}
+
+	$query_text = 'SELECT message.message_id, message.resource_id, resource.resource_name, message.sender_user_id, message.body, message.created_at, sender.email AS sender_email FROM message INNER JOIN resource ON resource.resource_id = message.resource_id INNER JOIN user AS sender ON sender.user_id = message.sender_user_id WHERE message.resource_id IN ( SELECT resource_id FROM administrator_resource WHERE user_id = :administrator_user_id UNION SELECT DISTINCT resource_id FROM message WHERE sender_user_id = :participant_user_id )' . $resource_filter_clause . ' ORDER BY message.created_at ASC';
+
+	$message_statement = $database_connection->prepare( $query_text );
+	$message_statement->execute( $query_parameters );
 
 	$message_list = [];
 

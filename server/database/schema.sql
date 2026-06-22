@@ -54,6 +54,21 @@ CREATE TABLE resource (
 	description TEXT DEFAULT NULL,
 	maximum_period_value INT UNSIGNED NOT NULL DEFAULT 1,
 	maximum_period_unit ENUM( 'day', 'hour' ) NOT NULL DEFAULT 'day',
+	-- Availability window.
+	--   'always'    : the resource can be booked at any moment, 24 hours a day,
+	--                 7 days a week. The columns below are ignored.
+	--   'scheduled' : bookings are only allowed on the listed working_days and,
+	--                 on each day they touch, only between active_start_time and
+	--                 active_end_time. This covers both single day bookings ( an
+	--                 hourly microscope open 08:00 - 18:00 ) and multi day
+	--                 bookings ( a car free all day, but only on weekdays ).
+	availability_mode ENUM( 'always', 'scheduled' ) NOT NULL DEFAULT 'always',
+	-- The daily active window for a scheduled resource. An active_end_time of
+	-- '00:00:00' is read as the end of the day ( midnight ), so a window of
+	-- '00:00:00' - '00:00:00' means the whole day is available.
+	active_start_time TIME NOT NULL DEFAULT '00:00:00',
+	active_end_time TIME NOT NULL DEFAULT '00:00:00',
+	working_days SET( 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday' ) NOT NULL DEFAULT 'monday,tuesday,wednesday,thursday,friday',
 	is_active TINYINT( 1 ) NOT NULL DEFAULT 1,
 	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY ( resource_id )
@@ -208,9 +223,15 @@ CREATE TABLE rate_limit (
 -- ---------------------------------------------------------------------------
 
 INSERT INTO setting ( setting_key, setting_value, description ) VALUES
-	( 'maximum_active_reservations_per_user', '5', 'How many pending or confirmed reservations a single user may hold at the same time.' );
+	( 'maximum_active_reservations_per_user', '5', 'How many pending or confirmed reservations a single user may hold at the same time.' ),
+	( 'reservation_minimum_lead_minutes', '60', 'How many minutes from now a reservation must begin at the earliest.' ),
+	( 'reservation_maximum_horizon_months', '3', 'How many months from now a reservation may begin at the latest.' );
 
-INSERT INTO resource ( resource_name, description, maximum_period_value, maximum_period_unit, is_active ) VALUES
-	( 'Meeting Room A', 'Large meeting room with projector.', 7, 'day', 1 ),
-	( 'Company Car', 'Shared company car for business trips.', 3, 'day', 1 ),
-	( 'Laboratory Microscope', 'High resolution microscope, hourly booking.', 8, 'hour', 1 );
+-- The three resources below show the three supported availability shapes:
+--   Meeting Room A         - always available ( 24 / 7 ).
+--   Company Car            - scheduled, all day but only on weekdays ( multi day ).
+--   Laboratory Microscope  - scheduled, weekdays 08:00 - 18:00 ( single day, hourly ).
+INSERT INTO resource ( resource_name, description, maximum_period_value, maximum_period_unit, availability_mode, active_start_time, active_end_time, working_days, is_active ) VALUES
+	( 'Meeting Room A', 'Large meeting room with projector.', 7, 'day', 'always', '00:00:00', '00:00:00', 'monday,tuesday,wednesday,thursday,friday,saturday,sunday', 1 ),
+	( 'Company Car', 'Shared company car for business trips.', 3, 'day', 'scheduled', '00:00:00', '00:00:00', 'monday,tuesday,wednesday,thursday,friday', 1 ),
+	( 'Laboratory Microscope', 'High resolution microscope, hourly booking.', 8, 'hour', 'scheduled', '08:00:00', '18:00:00', 'monday,tuesday,wednesday,thursday,friday', 1 );

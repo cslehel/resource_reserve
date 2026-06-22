@@ -48,7 +48,9 @@ try {
 
 	$resource_row = load_active_resource( $database_connection, $resource_id );
 
-	validate_reservation_timeframe( $resource_row, $begin_datetime_text, $end_datetime_text );
+	validate_reservation_timeframe( $database_connection, $resource_row, $begin_datetime_text, $end_datetime_text );
+
+	assert_no_overlapping_reservation( $database_connection, $resource_id, $begin_datetime_text, $end_datetime_text, $reservation_id );
 
 	$update_statement = $database_connection->prepare( 'UPDATE reservation SET resource_id = :resource_id, begin_datetime = :begin_datetime, end_datetime = :end_datetime, description = :description WHERE reservation_id = :reservation_id' );
 	$update_statement->execute( [
