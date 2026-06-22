@@ -4,21 +4,6 @@ This folder holds the MySQL schema and the PHP API that the Android app talks to
 
 ## 1. Create the database
 
-Run the schema with the MySQL client ( it creates the `resource_reserve`
-database, all nine tables, and some seed data ):
-
-```bash
-mysql -u root -p < database/schema.sql
-```
-
-Then create a database user that the API will use and grant it access:
-
-```sql
-CREATE USER 'resource_reserve_user'@'localhost' IDENTIFIED BY 'change_this_password';
-GRANT SELECT, INSERT, UPDATE, DELETE ON resource_reserve.* TO 'resource_reserve_user'@'localhost';
-FLUSH PRIVILEGES;
-```
-
 ### Tables
 
 | Table         | Purpose                                                                 |
